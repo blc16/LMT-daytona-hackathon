@@ -76,3 +76,4 @@ class ExperimentResult(BaseModel):
     config: ExperimentConfig
     timeline: List[IntervalResult]
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
