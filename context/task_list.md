@@ -8,11 +8,11 @@ This project is divided into 4 Phases. Tasks within a phase can often be done in
 *   `[P2]` Nice to have / Polish
 
 ## Phase 0: Project Setup (0.5 Days)
-- [ ] [P0] **Repo Setup**: Initialize Monorepo structure (backend/frontend folders). @Team
-- [ ] [P0] **Backend Init**: Set up Python/FastAPI project, virtualenv, and basic folder structure (`orchestrator`, `market`, `search`, `llm`). @Backend
-- [ ] [P0] **Frontend Init**: Set up Next.js + Tailwind project. @Frontend
-- [ ] [P0] **Config & Secrets**: Create `.env.template` and config loader for API keys (Kalshi, Exa, LLM, Daytona). @Backend
-- [ ] [P0] **Interfaces**: Define `MarketClient`, `SearchClient`, `DaytonaClient` abstract base classes/Protocols. @Backend
+- [x] [P0] **Repo Setup**: Initialize Monorepo structure (backend/frontend folders). @Team
+- [x] [P0] **Backend Init**: Set up Python/FastAPI project, virtualenv, and basic folder structure (`orchestrator`, `market`, `search`, `llm`). @Backend
+- [x] [P0] **Frontend Init**: Set up Next.js + Tailwind project. @Frontend
+- [x] [P0] **Config & Secrets**: Create `.env.template` and config loader for API keys (Kalshi, Exa, LLM, Daytona). @Backend
+- [x] [P0] **Interfaces**: Define `MarketClient`, `SearchClient`, `DaytonaClient` abstract base classes/Protocols. @Backend
 
 ## Phase 1: Core Backend & UI Skeleton (Day 1)
 ### Backend
