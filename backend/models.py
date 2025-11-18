@@ -80,6 +80,7 @@ class IntervalResult(BaseModel):
     decisions: List[AgentDecision]
     aggregated_decision: DecisionEnum
     aggregated_confidence: float
+    news: List[SearchSnippet] = Field(default_factory=list, description="News articles available at this interval")
 
 class ExperimentResult(BaseModel):
     """Complete dump of an experiment run."""

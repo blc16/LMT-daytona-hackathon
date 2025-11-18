@@ -303,7 +303,8 @@ class Orchestrator:
                 market_state=market_state,
                 decisions=decisions,
                 aggregated_decision=aggregated_decision,
-                aggregated_confidence=aggregated_confidence
+                aggregated_confidence=aggregated_confidence,
+                news=unique_results  # Store the news snippets for evidence display
             )
             
             print(f"  ✅ [Interval {interval_index + 1}] Completed: {aggregated_decision.value} ({aggregated_confidence:.0%})")

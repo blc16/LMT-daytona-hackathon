@@ -40,6 +40,15 @@ export interface AgentDecision {
   };
 }
 
+export interface SearchSnippet {
+  id: string;
+  title: string;
+  url: string;
+  text: string;
+  published_date: string;
+  score: number;
+}
+
 export interface IntervalResult {
   timestamp: string;
   market_state: {
@@ -50,6 +59,7 @@ export interface IntervalResult {
   decisions: AgentDecision[];
   aggregated_decision: 'YES' | 'NO';
   aggregated_confidence: number;
+  news: SearchSnippet[];
 }
 
 export interface ExperimentResult {
