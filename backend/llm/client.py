@@ -61,3 +61,26 @@ class LLMClient:
                 
             return schema.model_validate_json(content)
 
+    async def generate_text(self, model: str, system_prompt: str, user_prompt: str) -> str:
+        """
+        Generate plain text response (for code generation, etc).
+        """
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0.7
+        }
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.base_url}/chat/completions",
+                headers=self.headers,
+                json=payload
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
+

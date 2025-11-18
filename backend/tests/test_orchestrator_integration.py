@@ -12,19 +12,24 @@ class TestOrchestratorIntegration(unittest.IsolatedAsyncioTestCase):
     
     async def test_full_experiment_flow(self):
         """
-        Run a real experiment for Gemini 3.0 market.
-        Uses 3 intervals, 1 hour apart, over the last 3 hours.
+        Run a real experiment for Gemini 3.0 market with iterative Daytona agent.
+        Uses 3 intervals, 1 day apart, over the last 3 days.
         """
         # Check if we have required API keys
         if not settings.EXA_API_KEY or "your_" in settings.EXA_API_KEY:
             self.skipTest("EXA_API_KEY not set")
         if not settings.OPENROUTER_API_KEY or "your_" in settings.OPENROUTER_API_KEY:
             self.skipTest("OPENROUTER_API_KEY not set")
+        if not settings.DAYTONA_API_KEY or "your_" in settings.DAYTONA_API_KEY:
+            self.skipTest("DAYTONA_API_KEY not set - falling back to DIRECT_LLM mode")
+            use_daytona = False
+        else:
+            use_daytona = True
         
-        # Use a historical time window: last 3 days with 1 day intervals
-        # Use current date dynamically
-        end_time = datetime.now(timezone.utc)
-        start_time = end_time - timedelta(days=3)
+        # Use a historical time window: October 2025 (before market end date of Oct 31)
+        # Market end date is 2025-10-31, so use dates in October 2025
+        end_time = datetime(2025, 10, 15, 12, 0, tzinfo=timezone.utc)
+        start_time = datetime(2025, 10, 12, 12, 0, tzinfo=timezone.utc)  # 3 days before
         
         config = ExperimentConfig(
             market_slug="gemini-3pt0-released-by",
@@ -32,8 +37,8 @@ class TestOrchestratorIntegration(unittest.IsolatedAsyncioTestCase):
             end_time=end_time,
             interval_minutes=1440,  # 1 day intervals (24 * 60 = 1440 minutes)
             num_simulations=1,
-            model_provider="openai/gpt-4o-mini",  # Using gpt-4o-mini (gpt-5-mini doesn't exist)
-            mode=ExperimentMode.DIRECT_LLM
+            model_provider="openai/gpt-4o-mini",
+            mode=ExperimentMode.DAYTONA_AGENT if use_daytona else ExperimentMode.DIRECT_LLM
         )
         
         print("\n" + "="*80)
@@ -46,20 +51,38 @@ class TestOrchestratorIntegration(unittest.IsolatedAsyncioTestCase):
         print("="*80 + "\n")
         
         orchestrator = Orchestrator()
-        results = await orchestrator.run_experiment(config)
+        experiment_id = await orchestrator.run_experiment(config)
+        
+        # Load results back from storage
+        experiment_result = orchestrator.storage.load_experiment(experiment_id)
+        assert experiment_result is not None, "Failed to load experiment"
+        results = experiment_result.timeline
         
         print("\n" + "="*80)
         print("RESULTS ANALYSIS & INTERVAL COMPARISON")
         print("="*80)
-        
-        # Track news URLs across intervals to see overlap
-        all_news_urls = []
+        print(f"Experiment ID: {experiment_id}")
         
         for i, result in enumerate(results, 1):
-            print(f"\n--- Interval {i}: {result.timestamp} ---")
+            print(f"\n{'='*80}")
+            print(f"--- Interval {i}: {result.timestamp} ---")
+            print(f"{'='*80}")
             print(f"Market Price (YES probability): {result.market_state.price:.2%}")
             print(f"Decisions made: {len(result.decisions)}")
-            print(f"Aggregated Decision: {result.aggregated_decision} (confidence: {result.aggregated_confidence:.2%})")
+            print(f"Aggregated Decision: {result.aggregated_decision.value} (confidence: {result.aggregated_confidence:.2%})")
+            
+            # Show detailed decision information
+            for j, decision in enumerate(result.decisions, 1):
+                print(f"\n  Decision {j}:")
+                print(f"    - Decision: {decision.decision.value}")
+                print(f"    - Confidence: {decision.confidence:.2%}")
+                print(f"    - Relevant Evidence IDs: {len(decision.relevant_evidence_ids)} items")
+                if decision.relevant_evidence_ids:
+                    print(f"      {decision.relevant_evidence_ids[:3]}...")  # Show first 3
+                print(f"    - Rationale Preview:")
+                rationale_preview = decision.rationale[:300] + "..." if len(decision.rationale) > 300 else decision.rationale
+                for line in rationale_preview.split('\n')[:5]:  # Show first 5 lines
+                    print(f"      {line}")
             
             # Note: We can't access news from IntervalResult directly, but we logged it during processing
             # The news is in the context that was built but not stored in the result

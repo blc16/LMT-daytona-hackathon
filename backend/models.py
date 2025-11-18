@@ -55,12 +55,23 @@ class IntervalContext(BaseModel):
 
 # --- 3. Output Models (Agent Output & Storage) ---
 
+class CodeExecutionTrace(BaseModel):
+    """Tracks code execution details for audit and debugging."""
+    code: str = Field(..., description="The Python code that was executed")
+    raw_output: str = Field(..., description="Full raw output from code execution (stdout/stderr)")
+    exit_code: int = Field(..., description="Exit code from execution (0 = success, non-zero = failure)")
+    executed_successfully: bool = Field(..., description="Whether the code executed without errors")
+    execution_time_ms: Optional[float] = Field(None, description="Execution time in milliseconds")
+    error_message: Optional[str] = Field(None, description="Error message if execution failed")
+    attempt_number: int = Field(1, description="Which attempt this was (for retries)")
+
 class AgentDecision(BaseModel):
     """The structured decision returned by the Agent code."""
     decision: DecisionEnum
     confidence: float = Field(..., ge=0.0, le=1.0)
     rationale: str = Field(..., description="Markdown explanation of the decision")
     relevant_evidence_ids: List[str] = Field(default_factory=list, description="IDs/URLs of SearchSnippets used")
+    execution_trace: Optional[CodeExecutionTrace] = Field(None, description="Code execution trace (for Daytona agent mode)")
 
 class IntervalResult(BaseModel):
     """The recorded result for one time interval."""

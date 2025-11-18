@@ -11,7 +11,9 @@ class TestOrchestrator(unittest.IsolatedAsyncioTestCase):
         with patch("backend.orchestrator.core.PolymarketClient") as MockMarket, \
              patch("backend.orchestrator.core.ExaSearchClient") as MockSearch, \
              patch("backend.orchestrator.core.LLMClient") as MockLLM, \
-             patch("backend.orchestrator.core.Researcher") as MockResearcher:
+             patch("backend.orchestrator.core.Researcher") as MockResearcher, \
+             patch("backend.orchestrator.core.TraderAgent") as MockTrader, \
+             patch("backend.orchestrator.core.ExperimentStorage") as MockStorage:
              
             # Setup Mocks
             market_instance = MockMarket.return_value
@@ -27,6 +29,18 @@ class TestOrchestrator(unittest.IsolatedAsyncioTestCase):
             search_instance = MockSearch.return_value
             search_instance.search = AsyncMock(return_value=[])
             
+            trader_instance = MockTrader.return_value
+            from backend.models import AgentDecision, DecisionEnum
+            trader_instance.make_decision = AsyncMock(return_value=AgentDecision(
+                decision=DecisionEnum.YES,
+                confidence=0.7,
+                rationale="Test",
+                relevant_evidence_ids=[]
+            ))
+            
+            storage_instance = MockStorage.return_value
+            storage_instance.save_experiment = Mock(return_value="test-id-123")
+            
             # Config
             config = ExperimentConfig(
                 market_slug="gemini",
@@ -37,13 +51,11 @@ class TestOrchestrator(unittest.IsolatedAsyncioTestCase):
             )
             
             orchestrator = Orchestrator()
-            # Inject mocked instances (since __init__ creates new ones, we need to mock the classes before __init__ or inject manually)
-            # Actually, since we patched the classes at the module level, Orchestrator() will instantiate our Mocks.
             
-            results = await orchestrator.run_experiment(config)
+            experiment_id = await orchestrator.run_experiment(config)
             
-            # 10:00, 11:00, 12:00 -> 3 intervals
-            self.assertEqual(len(results), 3)
+            # Should return experiment ID
+            self.assertEqual(experiment_id, "test-id-123")
             
             # Verify calls
             market_instance.get_market_metadata.assert_called_once()
@@ -51,6 +63,8 @@ class TestOrchestrator(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(researcher_instance.generate_queries.call_count, 3)
             # Search called 3 times (once per interval for the 1 query)
             self.assertEqual(search_instance.search.call_count, 3)
+            # Trader called 3 times (once per interval, 1 simulation each)
+            self.assertEqual(trader_instance.make_decision.call_count, 3)
 
 if __name__ == '__main__':
     unittest.main()
