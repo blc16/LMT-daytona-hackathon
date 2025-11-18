@@ -1,65 +1,377 @@
-import Image from "next/image";
+'use client';
+
+import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { runExperiment, fetchMarketMetadata, getExperimentProgress, type ExperimentConfig, type ExperimentProgress } from '@/lib/api';
+import { TrendingUp, Play, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 export default function Home() {
+  const router = useRouter();
+  const [isLoading, setIsLoading] = useState(false);
+  const [isFetchingMarket, setIsFetchingMarket] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [marketInfo, setMarketInfo] = useState<{ title: string; description: string } | null>(null);
+  const [runningExperimentId, setRunningExperimentId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<ExperimentProgress | null>(null);
+  
+  const [formData, setFormData] = useState<ExperimentConfig>({
+    market_slug: 'gemini-3pt0-released-by',
+    start_time: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16),
+    end_time: new Date().toISOString().slice(0, 16),
+    interval_minutes: 60,
+    num_simulations: 1,
+    model_provider: 'openai/gpt-4o',
+    mode: 'daytona_agent',
+  });
+
+  const handleFetchMarket = async () => {
+    if (!formData.market_slug.trim()) {
+      setError('Please enter a market slug');
+      return;
+    }
+
+    setIsFetchingMarket(true);
+    setError(null);
+    try {
+      const metadata = await fetchMarketMetadata(formData.market_slug);
+      setMarketInfo({
+        title: metadata.title,
+        description: metadata.description || 'No description available',
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch market information');
+      setMarketInfo(null);
+    } finally {
+      setIsFetchingMarket(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      // Convert local datetime to ISO string
+      const config: ExperimentConfig = {
+        ...formData,
+        start_time: new Date(formData.start_time).toISOString(),
+        end_time: new Date(formData.end_time).toISOString(),
+      };
+
+      const result = await runExperiment(config);
+      setRunningExperimentId(result.experiment_id);
+      // Start polling for progress
+      startProgressPolling(result.experiment_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to run experiment');
+      setIsLoading(false);
+    }
+  };
+
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const startProgressPolling = (experimentId: string) => {
+    // Clear any existing interval
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+    }
+    
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const progressData = await getExperimentProgress(experimentId);
+        setProgress(progressData);
+        
+        if (progressData.status === 'completed' || progressData.status === 'failed') {
+          if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current);
+            pollIntervalRef.current = null;
+          }
+          setIsLoading(false);
+          // Redirect to experiment page after a short delay
+          setTimeout(() => {
+            router.push(`/experiment/${experimentId}`);
+          }, 1000);
+        }
+      } catch (err) {
+        console.error('Failed to fetch progress:', err);
+        // If experiment is not found, it might be completed
+        // Try redirecting to experiment page
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+        setIsLoading(false);
+        router.push(`/experiment/${experimentId}`);
+      }
+    }, 2000); // Poll every 2 seconds
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, []);
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-purple-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800">
+      <div className="container mx-auto px-4 py-12 max-w-6xl">
+        {/* Header */}
+        <div className="text-center mb-12">
+          <div className="inline-flex items-center gap-2 mb-4">
+            <TrendingUp className="w-8 h-8 text-blue-600 dark:text-blue-400" />
+            <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+              LLM Market Timeline
+            </h1>
+          </div>
+          <p className="text-lg text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
+            Backtest AI-driven trading decisions on prediction markets with time-sliced analysis
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        {/* Main Form Card */}
+        <Card variant="elevated" className="mb-8">
+          <CardHeader>
+            <CardTitle>Run New Experiment</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {/* Market Selection */}
+              <div className="space-y-4">
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <Input
+                      label="Market Slug"
+                      placeholder="e.g., gemini-3pt0-released-by"
+                      value={formData.market_slug}
+                      onChange={(e) => setFormData({ ...formData, market_slug: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleFetchMarket}
+                      isLoading={isFetchingMarket}
+                    >
+                      Fetch Info
+                    </Button>
+                  </div>
+                </div>
+
+                {marketInfo && (
+                  <div className="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+                    <div className="flex items-start gap-2">
+                      <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <h4 className="font-semibold text-green-900 dark:text-green-100 mb-1">
+                          {marketInfo.title}
+                        </h4>
+                        <p className="text-sm text-green-700 dark:text-green-300 line-clamp-2">
+                          {marketInfo.description}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Time Configuration */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Input
+                  label="Start Time"
+                  type="datetime-local"
+                  value={formData.start_time}
+                  onChange={(e) => setFormData({ ...formData, start_time: e.target.value })}
+                  required
+                />
+                <Input
+                  label="End Time"
+                  type="datetime-local"
+                  value={formData.end_time}
+                  onChange={(e) => setFormData({ ...formData, end_time: e.target.value })}
+                  required
+                />
+              </div>
+
+              {/* Simulation Settings */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Input
+                  label="Interval (minutes)"
+                  type="number"
+                  min="1"
+                  value={formData.interval_minutes}
+                  onChange={(e) =>
+                    setFormData({ ...formData, interval_minutes: parseInt(e.target.value) || 60 })
+                  }
+                  required
+                />
+                <Input
+                  label="Number of Simulations"
+                  type="number"
+                  min="1"
+                  value={formData.num_simulations}
+                  onChange={(e) =>
+                    setFormData({ ...formData, num_simulations: parseInt(e.target.value) || 1 })
+                  }
+                  required
+                />
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+                    Model Provider
+                  </label>
+                  <select
+                    className="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={formData.model_provider}
+                    onChange={(e) => setFormData({ ...formData, model_provider: e.target.value })}
+                    required
+                  >
+                    <option value="openai/gpt-4o">GPT-4o</option>
+                    <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
+                    <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
+                    <option value="google/gemini-pro-1.5">Gemini Pro 1.5</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Mode Selection */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+                  Execution Mode
+                </label>
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="mode"
+                      value="daytona_agent"
+                      checked={formData.mode === 'daytona_agent'}
+                      onChange={(e) =>
+                        setFormData({ ...formData, mode: e.target.value as 'daytona_agent' | 'direct_llm' })
+                      }
+                      className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-gray-700 dark:text-gray-300">Daytona Agent (Code Execution)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="mode"
+                      value="direct_llm"
+                      checked={formData.mode === 'direct_llm'}
+                      onChange={(e) =>
+                        setFormData({ ...formData, mode: e.target.value as 'daytona_agent' | 'direct_llm' })
+                      }
+                      className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-gray-700 dark:text-gray-300">Direct LLM</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Progress Display */}
+              {progress && runningExperimentId && (
+                <div className="p-6 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-semibold text-blue-900 dark:text-blue-100">
+                      Experiment Running...
+                    </h3>
+                    <span className="text-sm text-blue-700 dark:text-blue-300">
+                      {progress.completed_intervals}/{progress.total_intervals} intervals
+                    </span>
+                  </div>
+                  <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-3 mb-2">
+                    <div
+                      className="bg-blue-600 dark:bg-blue-400 h-3 rounded-full transition-all duration-300"
+                      style={{ width: `${progress.progress_percent}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-sm text-blue-700 dark:text-blue-300">
+                    <span>{progress.progress_percent.toFixed(1)}% complete</span>
+                    <span>
+                      {Math.floor(progress.elapsed_seconds / 60)}m{' '}
+                      {Math.floor(progress.elapsed_seconds % 60)}s elapsed
+                    </span>
+                  </div>
+                  {progress.failed_intervals > 0 && (
+                    <div className="mt-2 text-sm text-orange-600 dark:text-orange-400">
+                      ⚠️ {progress.failed_intervals} interval(s) failed
+                    </div>
+                  )}
+                  {progress.status === 'failed' && progress.error && (
+                    <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/20 rounded text-sm text-red-700 dark:text-red-300">
+                      Error: {progress.error}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Error Display */}
+              {error && (
+                <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-start gap-2">
+                  <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0" />
+                  <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
+                </div>
+              )}
+
+              {/* Submit Button */}
+              <div className="flex justify-end pt-4">
+                <Button type="submit" variant="primary" size="lg" isLoading={isLoading}>
+                  <Play className="w-5 h-5 mr-2" />
+                  Run Experiment
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+
+        {/* Info Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="text-center">
+                <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 mb-1">
+                  Time-Sliced
+                </div>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Analyze decisions at each interval with historical context
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="text-center">
+                <div className="text-2xl font-bold text-purple-600 dark:text-purple-400 mb-1">
+                  AI-Powered
+                </div>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  LLM agents execute code in secure sandboxes for decisions
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="text-center">
+                <div className="text-2xl font-bold text-green-600 dark:text-green-400 mb-1">
+                  Backtest
+                </div>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Compare AI decisions against actual market outcomes
+                </p>
+              </div>
+            </CardContent>
+          </Card>
         </div>
-      </main>
+      </div>
     </div>
   );
 }

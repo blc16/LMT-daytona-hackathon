@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     # Daytona
     DAYTONA_API_KEY: str
-    DAYTONA_SERVER_URL: str = "https://api.daytona.io"
+    DAYTONA_API_URL: str = "https://app.daytona.io/api"
 
     # Galileo
     GALILEO_API_KEY: Optional[str] = None

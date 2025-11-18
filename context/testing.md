@@ -7,6 +7,10 @@
     *   `DaytonaClient`: Mock the sandbox execution. Test timeout handling and error parsing.
 *   **Utils:**
     *   `generate_intervals`: Ensure correct start/end handling and interval slicing.
+    *   `rate_limit`: Test semaphore limits, delay enforcement, exception handling, nested usage.
+*   **Progress Tracking:**
+    *   `progress`: Test ExperimentProgress initialization, updates, status changes, to_dict conversion.
+    *   `ProgressTracker`: Test create/get/update/finish/remove operations, concurrent updates.
 
 ## 2. Integration Tests
 *   **Orchestrator Loop:**
