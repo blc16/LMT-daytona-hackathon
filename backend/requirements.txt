@@ -5,8 +5,5 @@ pydantic-settings
 httpx
 python-dotenv
 openai
-anthropic
-google-generativeai
 pandas
 numpy
-

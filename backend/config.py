@@ -10,10 +10,8 @@ class Settings(BaseSettings):
     # Exa
     EXA_API_KEY: str
 
-    # LLMs
-    OPENAI_API_KEY: Optional[str] = None
-    ANTHROPIC_API_KEY: Optional[str] = None
-    GOOGLE_API_KEY: Optional[str] = None
+    # OpenRouter
+    OPENROUTER_API_KEY: str
 
     # Daytona
     DAYTONA_API_KEY: str
@@ -27,4 +25,3 @@ class Settings(BaseSettings):
         env_file_encoding = "utf-8"
 
 settings = Settings()
-
