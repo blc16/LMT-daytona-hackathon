@@ -100,3 +100,22 @@ export async function listExperiments(): Promise<string[]> {
   return response.json();
 }
 
+export interface ExperimentProgress {
+  experiment_id: string;
+  total_intervals: number;
+  completed_intervals: number;
+  failed_intervals: number;
+  progress_percent: number;
+  status: 'running' | 'completed' | 'failed';
+  elapsed_seconds: number;
+  error?: string | null;
+}
+
+export async function getExperimentProgress(experimentId: string): Promise<ExperimentProgress> {
+  const response = await fetch(`${API_BASE_URL}/api/experiments/${experimentId}/progress`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch experiment progress: ${response.statusText}`);
+  }
+  return response.json();
+}
+

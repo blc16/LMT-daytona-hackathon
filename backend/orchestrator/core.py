@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import List, Dict, Any
+import asyncio
 from backend.models import ExperimentConfig, IntervalResult, IntervalContext, MarketState, SearchSnippet, AgentDecision, DecisionEnum
 from backend.market.polymarket import PolymarketClient
 from backend.search.exa import ExaSearchClient
@@ -9,6 +10,9 @@ from backend.orchestrator.storage import ExperimentStorage
 from backend.llm.client import LLMClient
 from backend.daytona.daytona_client import DaytonaClient
 from backend.utils.time import generate_intervals
+from backend.utils.rate_limit import APIRateLimiters
+from backend.orchestrator.progress import progress_tracker
+import uuid
 
 class Orchestrator:
     def __init__(self):
@@ -19,6 +23,7 @@ class Orchestrator:
         self.researcher = Researcher(self.llm_client)
         self.trader = TraderAgent(self.llm_client, self.daytona_client)
         self.storage = ExperimentStorage()
+        self.rate_limiters = APIRateLimiters()
 
     async def run_experiment(self, config: ExperimentConfig) -> str:
         """
@@ -98,128 +103,196 @@ class Orchestrator:
         print(f"Market end date: {target_market.get('endDateIso', 'Unknown')}")
         print(f"CLOB Token ID: {token_id}")
         
-        results = []
         intervals = generate_intervals(config.start_time, config.end_time, config.interval_minutes)
         
         print(f"Generated {len(intervals)} intervals.")
-
-        for interval_time in intervals:
-            print(f"\n{'='*80}")
-            print(f"Processing interval: {interval_time}...")
-            print(f"{'='*80}")
+        print(f"🚀 Processing {len(intervals)} intervals in parallel with rate limiting...")
+        
+        # Generate experiment ID upfront for progress tracking
+        experiment_id = str(uuid.uuid4())
+        await progress_tracker.create(experiment_id, len(intervals))
+        
+        # Calculate expected API calls for monitoring
+        expected_polymarket = len(intervals)
+        expected_exa = len(intervals) * 5  # 5 queries per interval
+        expected_openrouter = len(intervals) * (1 + config.num_simulations)  # 1 for queries + N for decisions
+        expected_daytona = len(intervals) * config.num_simulations
+        print(f"📊 Expected API calls:")
+        print(f"   - Polymarket: {expected_polymarket} calls (max 10 concurrent)")
+        print(f"   - Exa Search: {expected_exa} calls (max 5 concurrent, 15/min)")
+        print(f"   - OpenRouter: {expected_openrouter} calls (max 10 concurrent)")
+        print(f"   - Daytona: {expected_daytona} calls (max 2 concurrent - reduced to avoid disk limits)")
+        print(f"⏱️  Estimated time: ~{max(expected_exa // 10 * 2, expected_daytona // 2 * 3) // 60} minutes")
+        
+        # Track progress with shared counter
+        import time
+        start_time = time.time()
+        total_intervals = len(intervals)
+        completed_counter = {"count": 0}  # Use dict to allow mutation in closures
+        failed_counter = {"count": 0}
+        
+        # Process all intervals in parallel
+        tasks = [
+            self._process_interval(
+                interval_time=interval_time,
+                token_id=token_id,
+                market_metadata=market_metadata,
+                config=config,
+                interval_index=idx,
+                total_intervals=total_intervals,
+                progress_counter=completed_counter,
+                failed_counter=failed_counter,
+                start_time=start_time,
+                progress_id=experiment_id
+            )
+            for idx, interval_time in enumerate(intervals)
+        ]
+        
+        try:
+            # Wait for all intervals to complete
+            results = await asyncio.gather(*tasks, return_exceptions=True)
             
-            # A. Get Market State at T - FAIL HARD if this doesn't work
-            print(f"  Fetching market price at {interval_time}...")
-            price = await self.market_client.get_price_at(token_id, interval_time, config.interval_minutes)
-            print(f"  ✅ Market Price (YES probability): {price:.2%}")
+            elapsed = time.time() - start_time
+            print(f"\n⏱️  Total execution time: {elapsed:.1f} seconds ({elapsed/60:.1f} minutes)")
+            
+            # Filter out exceptions and sort by timestamp
+            valid_results = []
+            failed_intervals = []
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    print(f"\n❌ Interval {i+1} failed with error: {result}")
+                    import traceback
+                    traceback.print_exc()
+                    failed_intervals.append(i + 1)
+                else:
+                    valid_results.append(result)
+            
+            # Sort by timestamp to ensure correct order
+            valid_results.sort(key=lambda r: r.timestamp)
+            
+            print(f"\n✅ Processed {len(valid_results)}/{len(intervals)} intervals successfully")
+            if failed_intervals:
+                print(f"⚠️  Failed intervals: {failed_intervals}")
+            
+            # Ensure we have at least some results
+            if not valid_results:
+                await progress_tracker.finish(experiment_id, success=False, error="All intervals failed")
+                raise ValueError(f"All {len(intervals)} intervals failed. Cannot save experiment.")
+            
+            # Save experiment results
+            try:
+                self.storage.save_experiment(config, valid_results, experiment_id)
+                await progress_tracker.finish(experiment_id, success=True)
+                print(f"\n✅ Experiment completed! Saved with ID: {experiment_id}")
+                return experiment_id
+            except Exception as e:
+                import traceback
+                print(f"\n❌ Failed to save experiment: {e}")
+                traceback.print_exc()
+                await progress_tracker.finish(experiment_id, success=False, error=str(e))
+                raise
+        except Exception as e:
+            await progress_tracker.finish(experiment_id, success=False, error=str(e))
+            raise
+    
+    async def _process_interval(
+        self,
+        interval_time: datetime,
+        token_id: str,
+        market_metadata: Dict[str, Any],
+        config: ExperimentConfig,
+        interval_index: int,
+        total_intervals: int,
+        progress_counter: Dict[str, int],
+        failed_counter: Dict[str, int],
+        start_time: float,
+        progress_id: str
+    ) -> IntervalResult:
+        """Process a single interval with rate limiting."""
+        print(f"\n[Interval {interval_index + 1}/{total_intervals}] Processing {interval_time}...")
+        
+        try:
+            # A. Get Market State at T - with rate limiting
+            async with self.rate_limiters.polymarket:
+                print(f"  [Interval {interval_index + 1}] Fetching market price...")
+                price = await self.market_client.get_price_at(token_id, interval_time, config.interval_minutes)
+                print(f"  ✅ [Interval {interval_index + 1}] Market Price: {price:.2%}")
             
             market_state = MarketState(timestamp=interval_time, price=price)
             
-            # B. Researcher Agent: Generate Queries
-            queries = await self.researcher.generate_queries(
-                market_info=market_metadata,
-                current_price=price,
-                timestamp=interval_time,
-                model=config.model_provider
-            )
-            print(f"  Researcher generated {len(queries)} queries:")
-            for i, q in enumerate(queries, 1):
-                print(f"    {i}. {q}")
+            # B. Researcher Agent: Generate Queries - with rate limiting
+            async with self.rate_limiters.openrouter:
+                queries = await self.researcher.generate_queries(
+                    market_info=market_metadata,
+                    current_price=price,
+                    timestamp=interval_time,
+                    model=config.model_provider
+                )
+                print(f"  [Interval {interval_index + 1}] Generated {len(queries)} queries")
             
-            # C. Execute Search
-            search_results: List[SearchSnippet] = []
+            # C. Execute Search - parallelize queries with rate limiting
+            search_tasks = []
             for query in queries:
-                # Rate limit / parallelize here in real prod
-                snippets = await self.search_client.search(query, interval_time, limit=2)
-                search_results.extend(snippets)
-                print(f"    Query '{query[:50]}...' returned {len(snippets)} snippets")
+                async def search_with_limit(q: str):
+                    async with self.rate_limiters.exa:
+                        return await self.search_client.search(q, interval_time, limit=2)
+                search_tasks.append(search_with_limit(query))
             
-            # Filter out snippets published after the interval cutoff (defense in depth)
+            search_results_lists = await asyncio.gather(*search_tasks, return_exceptions=True)
+            search_results: List[SearchSnippet] = []
+            for result in search_results_lists:
+                if isinstance(result, Exception):
+                    print(f"  ⚠️  [Interval {interval_index + 1}] Search query failed: {result}")
+                else:
+                    search_results.extend(result)
+            
+            # Filter out snippets published after the interval cutoff
             filtered_results = []
             for snippet in search_results:
                 if snippet.published_date:
                     try:
-                        # Parse the published date
                         pub_date = datetime.fromisoformat(snippet.published_date.replace("Z", "+00:00"))
                         if pub_date <= interval_time:
                             filtered_results.append(snippet)
                     except (ValueError, AttributeError):
-                        # If we can't parse the date, exclude it to be safe
                         pass
-                else:
-                    # No published date, exclude to be safe
-                    pass
             
-            print(f"  After filtering: {len(filtered_results)} snippets (from {len(search_results)} total)")
-            
-            # Show details of filtered snippets
-            if filtered_results:
-                print(f"  Filtered snippets that passed time check:")
-                for i, snippet in enumerate(filtered_results[:5], 1):  # Show first 5
-                    print(f"    {i}. [{snippet.published_date}] {snippet.title[:60]}...")
-                    print(f"       URL: {snippet.url}")
-                    print(f"       Text preview: {snippet.text[:100]}...")
-                
-            # Show what was filtered out
-            filtered_out = len(search_results) - len(filtered_results)
-            if filtered_out > 0:
-                print(f"  ⚠️  {filtered_out} snippets were filtered out (published after {interval_time})")
-                
             # Deduplicate by URL
-            unique_results = {s.url: s for s in filtered_results}.values()
-            final_news_list = list(unique_results)
-            final_news_count = len(final_news_list)
-            print(f"  After deduplication: {final_news_count} unique news articles")
+            unique_results = list({s.url: s for s in filtered_results}.values())
+            print(f"  [Interval {interval_index + 1}] Found {len(unique_results)} unique news articles")
             
-            # Show final news that will be used
-            if final_news_list:
-                print(f"  Final news articles for this interval:")
-                for i, snippet in enumerate(final_news_list, 1):
-                    print(f"    {i}. [{snippet.published_date}] {snippet.title}")
-                    print(f"       Score: {snippet.score:.2f}")
-            
-            # D. Build Context
+            # D. Build Context (recent_history will be empty for parallel processing, but that's OK)
             context = IntervalContext(
                 time=interval_time,
                 market_info=market_metadata,
                 current_market_state=market_state,
-                news=list(unique_results),
-                recent_history=[r.market_state for r in results[-24:]] if results else []  # Last 24 intervals for trend
+                news=unique_results,
+                recent_history=[]  # Can't easily get this in parallel, but it's optional
             )
             
-            # E. Trader Agent: Make Decisions
-            print(f"\n  {'='*76}")
-            print(f"  TRADER AGENT: Making Decisions (Mode: {config.mode.value})")
-            print(f"  {'='*76}")
+            # E. Trader Agent: Make Decisions - with rate limiting
+            # Note: Trader uses both OpenRouter (for LLM) and Daytona (for code execution)
             decisions: List[AgentDecision] = []
             for sim_idx in range(config.num_simulations):
-                print(f"\n  Running simulation {sim_idx + 1}/{config.num_simulations}...")
                 try:
-                    decision = await self.trader.make_decision(
-                        context=context,
-                        model=config.model_provider,
-                        simulation_index=sim_idx,
-                        mode=config.mode.value
-                    )
-                    decisions.append(decision)
-                    print(f"\n  ✅ Simulation {sim_idx + 1} completed:")
-                    print(f"     Decision: {decision.decision.value}")
-                    print(f"     Confidence: {decision.confidence:.2%}")
-                    print(f"     Relevant Evidence: {len(decision.relevant_evidence_ids)} items")
-                    if decision.rationale:
-                        rationale_preview = decision.rationale[:200] + "..." if len(decision.rationale) > 200 else decision.rationale
-                        print(f"     Rationale Preview: {rationale_preview.split(chr(10))[0]}")
+                    # Acquire both rate limiters (nested)
+                    async with self.rate_limiters.openrouter:
+                        async with self.rate_limiters.daytona:
+                            decision = await self.trader.make_decision(
+                                context=context,
+                                model=config.model_provider,
+                                simulation_index=sim_idx,
+                                mode=config.mode.value
+                            )
+                            decisions.append(decision)
+                            print(f"  ✅ [Interval {interval_index + 1}] Simulation {sim_idx + 1}: {decision.decision.value} ({decision.confidence:.0%})")
                 except Exception as e:
-                    import traceback
-                    print(f"  ❌ Simulation {sim_idx + 1} failed: {e}")
-                    print(f"     Traceback: {traceback.format_exc()}")
-                    # Continue with other simulations
+                    print(f"  ❌ [Interval {interval_index + 1}] Simulation {sim_idx + 1} failed: {e}")
             
             # Aggregate decisions
             if decisions:
                 yes_count = sum(1 for d in decisions if d.decision == DecisionEnum.YES)
-                no_count = len(decisions) - yes_count
-                aggregated_decision = DecisionEnum.YES if yes_count >= no_count else DecisionEnum.NO
+                aggregated_decision = DecisionEnum.YES if yes_count >= len(decisions) - yes_count else DecisionEnum.NO
                 aggregated_confidence = sum(d.confidence for d in decisions) / len(decisions)
             else:
                 aggregated_decision = DecisionEnum.NO
@@ -232,11 +305,36 @@ class Orchestrator:
                 aggregated_decision=aggregated_decision,
                 aggregated_confidence=aggregated_confidence
             )
-            results.append(result)
-        
-        # Save experiment results
-        experiment_id = self.storage.save_experiment(config, results)
-        print(f"\n✅ Experiment completed! Saved with ID: {experiment_id}")
-        
-        return experiment_id
+            
+            print(f"  ✅ [Interval {interval_index + 1}] Completed: {aggregated_decision.value} ({aggregated_confidence:.0%})")
+            
+            # Update progress
+            progress_counter["count"] += 1
+            completed = progress_counter["count"]
+            failed = failed_counter["count"]
+            import time
+            elapsed = time.time() - start_time
+            if completed > 0:
+                avg_time_per_interval = elapsed / completed
+                remaining = total_intervals - completed - failed
+                estimated_remaining = avg_time_per_interval * remaining if remaining > 0 else 0
+                print(f"\n📊 Progress: {completed}/{total_intervals} intervals completed ({completed*100//total_intervals}%)")
+                if remaining > 0:
+                    print(f"   ⏱️  Elapsed: {elapsed:.1f}s | Est. remaining: {estimated_remaining:.1f}s ({estimated_remaining/60:.1f} min)")
+            
+            # Update progress tracker
+            await progress_tracker.update(progress_id, completed, failed)
+            
+            return result
+            
+        except Exception as e:
+            print(f"  ❌ [Interval {interval_index + 1}] Failed: {e}")
+            import traceback
+            traceback.print_exc()
+            # Update failed counter
+            failed_counter["count"] += 1
+            failed = failed_counter["count"]
+            completed = progress_counter["count"]
+            await progress_tracker.update(progress_id, completed, failed)
+            raise
 

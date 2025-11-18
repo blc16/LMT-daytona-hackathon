@@ -1,6 +1,6 @@
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List
 from backend.models import ExperimentConfig, ExperimentResult, IntervalResult
@@ -15,21 +15,28 @@ class ExperimentStorage:
     def save_experiment(
         self, 
         config: ExperimentConfig, 
-        timeline: List[IntervalResult]
+        timeline: List[IntervalResult],
+        experiment_id: Optional[str] = None
     ) -> str:
         """
         Save experiment results to a JSON file.
         
+        Args:
+            config: Experiment configuration
+            timeline: List of interval results
+            experiment_id: Optional experiment ID. If not provided, generates a new UUID.
+        
         Returns:
             Experiment ID (filename without extension)
         """
-        experiment_id = str(uuid.uuid4())
+        if experiment_id is None:
+            experiment_id = str(uuid.uuid4())
         
         result = ExperimentResult(
             id=experiment_id,
             config=config,
             timeline=timeline,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         
         file_path = self.storage_dir / f"{experiment_id}.json"

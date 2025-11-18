@@ -1,11 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { runExperiment, fetchMarketMetadata, type ExperimentConfig } from '@/lib/api';
+import { runExperiment, fetchMarketMetadata, getExperimentProgress, type ExperimentConfig, type ExperimentProgress } from '@/lib/api';
 import { TrendingUp, Play, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 export default function Home() {
@@ -14,6 +14,8 @@ export default function Home() {
   const [isFetchingMarket, setIsFetchingMarket] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [marketInfo, setMarketInfo] = useState<{ title: string; description: string } | null>(null);
+  const [runningExperimentId, setRunningExperimentId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<ExperimentProgress | null>(null);
   
   const [formData, setFormData] = useState<ExperimentConfig>({
     market_slug: 'gemini-3pt0-released-by',
@@ -61,13 +63,61 @@ export default function Home() {
       };
 
       const result = await runExperiment(config);
-      router.push(`/experiment/${result.experiment_id}`);
+      setRunningExperimentId(result.experiment_id);
+      // Start polling for progress
+      startProgressPolling(result.experiment_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to run experiment');
-    } finally {
       setIsLoading(false);
     }
   };
+
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const startProgressPolling = (experimentId: string) => {
+    // Clear any existing interval
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+    }
+    
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const progressData = await getExperimentProgress(experimentId);
+        setProgress(progressData);
+        
+        if (progressData.status === 'completed' || progressData.status === 'failed') {
+          if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current);
+            pollIntervalRef.current = null;
+          }
+          setIsLoading(false);
+          // Redirect to experiment page after a short delay
+          setTimeout(() => {
+            router.push(`/experiment/${experimentId}`);
+          }, 1000);
+        }
+      } catch (err) {
+        console.error('Failed to fetch progress:', err);
+        // If experiment is not found, it might be completed
+        // Try redirecting to experiment page
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+        setIsLoading(false);
+        router.push(`/experiment/${experimentId}`);
+      }
+    }, 2000); // Poll every 2 seconds
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-purple-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800">
@@ -225,6 +275,43 @@ export default function Home() {
                   </label>
                 </div>
               </div>
+
+              {/* Progress Display */}
+              {progress && runningExperimentId && (
+                <div className="p-6 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-semibold text-blue-900 dark:text-blue-100">
+                      Experiment Running...
+                    </h3>
+                    <span className="text-sm text-blue-700 dark:text-blue-300">
+                      {progress.completed_intervals}/{progress.total_intervals} intervals
+                    </span>
+                  </div>
+                  <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-3 mb-2">
+                    <div
+                      className="bg-blue-600 dark:bg-blue-400 h-3 rounded-full transition-all duration-300"
+                      style={{ width: `${progress.progress_percent}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-sm text-blue-700 dark:text-blue-300">
+                    <span>{progress.progress_percent.toFixed(1)}% complete</span>
+                    <span>
+                      {Math.floor(progress.elapsed_seconds / 60)}m{' '}
+                      {Math.floor(progress.elapsed_seconds % 60)}s elapsed
+                    </span>
+                  </div>
+                  {progress.failed_intervals > 0 && (
+                    <div className="mt-2 text-sm text-orange-600 dark:text-orange-400">
+                      ⚠️ {progress.failed_intervals} interval(s) failed
+                    </div>
+                  )}
+                  {progress.status === 'failed' && progress.error && (
+                    <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/20 rounded text-sm text-red-700 dark:text-red-300">
+                      Error: {progress.error}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Error Display */}
               {error && (

@@ -27,7 +27,21 @@
     *   **Storage:** JSON files (per experiment) or SQLite.
     *   **Exports:** Galileo-compatible format for evaluation.
 
-6.  **Frontend / UI**
+6.  **Progress Tracking**
+    *   **Module:** `backend/orchestrator/progress.py`
+    *   **Purpose:** Real-time progress tracking for long-running experiments.
+    *   **Storage:** In-memory (can be persisted to Redis/DB).
+    *   **Features:** Tracks completed/failed intervals, progress percentage, elapsed time, status.
+    *   **API:** `GET /api/experiments/{experiment_id}/progress`
+
+7.  **Rate Limiting**
+    *   **Module:** `backend/utils/rate_limit.py`
+    *   **Purpose:** Prevent API rate limit violations and manage concurrent requests.
+    *   **Implementation:** Uses `asyncio.Semaphore` for concurrency control.
+    *   **APIs Managed:** Polymarket, Exa Search, OpenRouter, Daytona.
+    *   **Features:** Configurable concurrency limits and delays per API.
+
+8.  **Frontend / UI**
     *   **Stack:** React / Next.js + Tailwind + Recharts.
     *   **API:** Python (FastAPI).
 
@@ -84,12 +98,21 @@
 ```
 
 ## Execution Flow (Per Interval)
-1.  **Fetch:** Get Odds at $t$, Search News where $time \le t$.
-2.  **Prepare Context:** specific to the current interval.
-3.  **Agent Loop:**
+1.  **Initialize Progress:** Create progress tracker for experiment.
+2.  **Fetch (with Rate Limiting):** Get Odds at $t$, Search News where $time \le t$.
+3.  **Prepare Context:** specific to the current interval.
+4.  **Agent Loop (with Rate Limiting):**
     *   Send Context + Task to LLM -> Get Code.
     *   Send Code + Context to Daytona -> Get JSON Result.
     *   *On Error:* Fallback to Direct LLM Prompt -> Get JSON Result.
-4.  **Aggregate:** Vote/Average across simulations/models.
-5.  **Store:** Save `IntervalData`.
+5.  **Update Progress:** Track completion/failure of interval.
+6.  **Aggregate:** Vote/Average across simulations/models.
+7.  **Store:** Save `IntervalData`.
+8.  **Finish Progress:** Mark experiment as completed/failed.
+
+## Rate Limiting Strategy
+*   **Parallel Processing:** All intervals processed concurrently with rate limiting.
+*   **Per-API Limits:** Each API has its own rate limiter with appropriate concurrency and delays.
+*   **Nested Usage:** Trader agent uses both OpenRouter and Daytona limiters (nested context managers).
+*   **Exception Safety:** Rate limiters release semaphores even on exceptions.
 

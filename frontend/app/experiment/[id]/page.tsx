@@ -14,7 +14,7 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from 'recharts';
-import { getExperiment, type ExperimentResult, type IntervalResult } from '@/lib/api';
+import { getExperiment, getExperimentProgress, type ExperimentResult, type IntervalResult, type ExperimentProgress } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import {
@@ -41,12 +41,48 @@ export default function ExperimentPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedInterval, setSelectedInterval] = useState<IntervalResult | null>(null);
   const [activeTab, setActiveTab] = useState<'reasoning' | 'evidence'>('reasoning');
+  const [progress, setProgress] = useState<ExperimentProgress | null>(null);
+  const [isRunning, setIsRunning] = useState(false);
 
   useEffect(() => {
     if (experimentId) {
       loadExperiment();
+      checkProgress();
     }
   }, [experimentId]);
+
+  const checkProgress = async () => {
+    try {
+      const progressData = await getExperimentProgress(experimentId);
+      setProgress(progressData);
+      setIsRunning(progressData.status === 'running');
+      
+      if (progressData.status === 'running') {
+        // Poll for progress updates
+        const pollInterval = setInterval(async () => {
+          try {
+            const updatedProgress = await getExperimentProgress(experimentId);
+            setProgress(updatedProgress);
+            if (updatedProgress.status !== 'running') {
+              setIsRunning(false);
+              clearInterval(pollInterval);
+              // Reload experiment data
+              loadExperiment();
+            }
+          } catch (err) {
+            console.error('Failed to fetch progress:', err);
+            clearInterval(pollInterval);
+            setIsRunning(false);
+          }
+        }, 2000);
+        
+        return () => clearInterval(pollInterval);
+      }
+    } catch (err) {
+      // Experiment might be completed or not found
+      setIsRunning(false);
+    }
+  };
 
   const loadExperiment = async () => {
     try {
@@ -74,7 +110,7 @@ export default function ExperimentPage() {
     );
   }
 
-  if (error || !experiment) {
+  if (error || (!experiment && !isRunning)) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-purple-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 flex items-center justify-center">
         <Card className="max-w-md">
@@ -90,6 +126,57 @@ export default function ExperimentPage() {
             </div>
           </CardContent>
         </Card>
+      </div>
+    );
+  }
+
+  // Show progress if experiment is running
+  if (isRunning && progress) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-purple-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800">
+        <div className="container mx-auto px-4 py-12 max-w-6xl">
+          <div className="mb-6">
+            <Button onClick={() => router.push('/')} variant="outline" className="mb-4">
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back to Home
+            </Button>
+          </div>
+          <Card variant="elevated">
+            <CardHeader>
+              <CardTitle>Experiment Running</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Progress
+                  </span>
+                  <span className="text-sm text-gray-600 dark:text-gray-400">
+                    {progress.completed_intervals}/{progress.total_intervals} intervals
+                  </span>
+                </div>
+                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-4">
+                  <div
+                    className="bg-blue-600 dark:bg-blue-400 h-4 rounded-full transition-all duration-300"
+                    style={{ width: `${progress.progress_percent}%` }}
+                  />
+                </div>
+                <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
+                  <span>{progress.progress_percent.toFixed(1)}% complete</span>
+                  <span>
+                    {Math.floor(progress.elapsed_seconds / 60)}m{' '}
+                    {Math.floor(progress.elapsed_seconds % 60)}s elapsed
+                  </span>
+                </div>
+                {progress.failed_intervals > 0 && (
+                  <div className="text-sm text-orange-600 dark:text-orange-400">
+                    ⚠️ {progress.failed_intervals} interval(s) failed
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }

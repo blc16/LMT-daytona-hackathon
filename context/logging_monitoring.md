@@ -21,7 +21,41 @@
     *   Raw Output from Sandbox/LLM.
     *   Used Search Snippets (IDs).
 
-## 4. Evaluation Export
+## 4. Progress Tracking
+*   **Location:** In-memory (can be persisted to Redis/DB in future).
+*   **Module:** `backend/orchestrator/progress.py`
+*   **Features:**
+    *   Real-time progress tracking for running experiments.
+    *   Tracks completed/failed intervals, progress percentage, elapsed time.
+    *   Status: `running`, `completed`, `failed`.
+    *   API endpoint: `GET /api/experiments/{experiment_id}/progress`
+*   **Data Structure:**
+    *   `experiment_id`: Unique identifier
+    *   `total_intervals`: Total number of intervals
+    *   `completed_intervals`: Successfully processed intervals
+    *   `failed_intervals`: Failed intervals
+    *   `progress_percent`: Percentage complete (0-100)
+    *   `status`: Current status
+    *   `elapsed_seconds`: Time since start
+    *   `error`: Error message if failed
+
+## 5. Rate Limiting
+*   **Module:** `backend/utils/rate_limit.py`
+*   **Purpose:** Prevent API rate limit violations and manage concurrent requests.
+*   **Implementation:** Uses `asyncio.Semaphore` for concurrency control and optional delays.
+*   **Configuration:**
+    *   **Polymarket:** `max_concurrent=10`, `delay_seconds=0.05`
+    *   **Exa Search:** `max_concurrent=10`, `delay_seconds=0.15`
+    *   **OpenRouter:** `max_concurrent=10`, `delay_seconds=0.1`
+    *   **Daytona:** `max_concurrent=2`, `delay_seconds=0.5` (reduced due to disk limits)
+*   **Usage:** Context manager pattern (`async with rate_limiter:`)
+*   **Features:**
+    *   Automatic semaphore acquisition/release
+    *   Configurable delays between requests
+    *   Exception-safe (releases semaphore even on errors)
+    *   Supports nested usage (e.g., trader needs both OpenRouter and Daytona)
+
+## 6. Evaluation Export
 *   **Goal:** Post-hoc analysis in Galileo.
 *   **Format:**
     *   `input`: The constructed context/prompt.

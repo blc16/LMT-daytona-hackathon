@@ -105,6 +105,8 @@ async def run_experiment(config: dict):
         )
         
         # Run experiment (this is async and may take a while)
+        # Run in background task to avoid timeout
+        import asyncio
         experiment_id = await orchestrator.run_experiment(experiment_config)
         
         return {"experiment_id": experiment_id, "status": "completed"}
@@ -113,7 +115,10 @@ async def run_experiment(config: dict):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        error_details = f"{str(e)}\n{traceback.format_exc()}"
+        print(f"ERROR running experiment: {error_details}")
+        raise HTTPException(status_code=500, detail=f"Failed to run experiment: {str(e)}")
 
 
 @app.get("/api/experiments/{experiment_id}")
@@ -152,6 +157,34 @@ async def list_experiments():
     try:
         experiment_ids = storage.list_experiments()
         return experiment_ids
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/experiments/{experiment_id}/progress")
+async def get_experiment_progress(experiment_id: str):
+    """Get progress for a running experiment."""
+    try:
+        from backend.orchestrator.progress import progress_tracker
+        progress = await progress_tracker.get(experiment_id)
+        if not progress:
+            # Check if experiment is already completed
+            experiment = storage.load_experiment(experiment_id)
+            if experiment:
+                return {
+                    "experiment_id": experiment_id,
+                    "status": "completed",
+                    "total_intervals": len(experiment.timeline),
+                    "completed_intervals": len(experiment.timeline),
+                    "failed_intervals": 0,
+                    "progress_percent": 100.0,
+                    "elapsed_seconds": 0,
+                    "error": None
+                }
+            raise HTTPException(status_code=404, detail="Experiment progress not found")
+        return progress.to_dict()
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
