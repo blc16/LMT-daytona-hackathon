@@ -2,10 +2,9 @@ from pydantic_settings import BaseSettings
 from typing import Optional
 
 class Settings(BaseSettings):
-    # Kalshi
-    KALSHI_API_KEY: str
-    KALSHI_API_SECRET: str
-    KALSHI_BASE_URL: str = "https://trading-api.kalshi.com/trade-api/v2"
+    # Polymarket
+    POLYMARKET_GAMMA_URL: str = "https://gamma-api.polymarket.com"
+    POLYMARKET_CLOB_URL: str = "https://clob.polymarket.com"
 
     # Exa
     EXA_API_KEY: str
