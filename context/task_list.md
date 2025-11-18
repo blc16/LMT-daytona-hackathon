@@ -16,7 +16,7 @@ This project is divided into 4 Phases. Tasks within a phase can often be done in
 
 ## Phase 1: Core Backend & UI Skeleton (Day 1)
 ### Backend
-- [ ] [P0] **Time Slicing**: Implement `generate_intervals` utility.
+- [x] [P0] **Time Slicing**: Implement `generate_intervals` utility.
 - [ ] [P0] **Market Client**: Implement `KalshiClient` (fetch metadata, historical odds). *Mock if API access is delayed.*
 - [ ] [P0] **Search Client**: Implement `ExaClient` with time filtering (`<= interval_time`).
 - [ ] [P0] **Data Models**: Define Pydantic models for `ExperimentConfig`, `IntervalView`, `DecisionResult`.
