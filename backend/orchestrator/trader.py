@@ -218,16 +218,21 @@ class TraderAgent:
     
     def _prepare_context_dict(self, context: IntervalContext) -> Dict[str, Any]:
         """Prepare context dictionary for code execution."""
+        # Truncate news text more aggressively to avoid huge context sizes
+        # Keep only first 300 chars of text to reduce JSON size
         return {
             "time": context.time.isoformat(),
-            "market": context.market_info,
+            "market": {
+                "title": context.market_info.get("title", ""),
+                "description": context.market_info.get("description", "")[:500] if isinstance(context.market_info.get("description"), str) else "",
+            },
             "current_price": context.current_market_state.price,
             "news": [
                 {
                     "id": snippet.id,
-                    "title": snippet.title,
+                    "title": snippet.title[:200],  # Truncate title too
                     "url": snippet.url,
-                    "text": snippet.text[:500],  # Truncate for context window
+                    "text": snippet.text[:300],  # More aggressive truncation
                     "published_date": snippet.published_date,
                     "score": snippet.score
                 }
@@ -238,7 +243,7 @@ class TraderAgent:
                     "timestamp": state.timestamp.isoformat(),
                     "price": state.price
                 }
-                for state in context.recent_history
+                for state in context.recent_history[-10:]  # Limit to last 10 intervals
             ]
         }
     

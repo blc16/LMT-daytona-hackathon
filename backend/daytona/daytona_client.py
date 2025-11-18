@@ -72,10 +72,23 @@ class DaytonaClient:
                 log_realtime(f"      📝 Preparing code with context injection...")
                 log_realtime(f"      Context size: {len(context_json)} characters")
                 
+                # Base64 encode the context to avoid issues with special characters
+                # Then encode it again as a Python string literal using repr() to safely embed it
+                import base64
+                context_b64 = base64.b64encode(context_json.encode('utf-8')).decode('utf-8')
+                # Use repr() to safely escape the base64 string for Python
+                context_b64_repr = repr(context_b64)
+                
                 # Wrap code to ensure it assigns result
+                # Use base64 decoding to safely pass large JSON context
                 full_code = f"""
 import json
-context = json.loads('''{context_json}''')
+import base64
+
+# Decode context from base64 to avoid string escaping issues
+context_b64_str = {context_b64_repr}
+context_json = base64.b64decode(context_b64_str).decode('utf-8')
+context = json.loads(context_json)
 
 # User's code
 {code}
