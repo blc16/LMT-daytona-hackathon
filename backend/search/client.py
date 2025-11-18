@@ -1,14 +1,6 @@
-from typing import Protocol, List, Dict, Any
+from typing import Protocol, List
 from datetime import datetime
-from pydantic import BaseModel
-
-class SearchSnippet(BaseModel):
-    id: str
-    title: str
-    url: str
-    text: str
-    published_date: str
-    score: float
+from backend.models import SearchSnippet
 
 class SearchClient(Protocol):
     """Interface for searching web content."""
@@ -19,4 +11,3 @@ class SearchClient(Protocol):
         This prevents future leakage in backtests.
         """
         ...
-
