@@ -31,7 +31,10 @@ class Researcher:
             f"Description: {market_info.get('description')}\n"
             f"Current Date: {timestamp.isoformat()}\n"
             f"Current Probability (YES): {current_price:.2f}\n\n"
-            "Generate specific search queries to find relevant evidence."
+            "Generate specific search queries to find relevant evidence. "
+            "Return your response as valid JSON with this exact structure: "
+            "Make sure each query is unique and gathers different information."
+            '{{"queries": ["query 1", "query 2", "query 3"]}}'
         )
 
         result = await self.llm.generate_json(

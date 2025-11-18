@@ -42,6 +42,12 @@ class LLMClient:
                 headers=self.headers,
                 json=payload
             )
+            if response.status_code != 200:
+                error_text = response.text
+                print(f"OpenRouter API Error {response.status_code}: {error_text}")
+                print(f"API Key present: {bool(self.api_key)}")
+                print(f"API Key length: {len(self.api_key) if self.api_key else 0}")
+                print(f"Request payload model: {payload.get('model')}")
             response.raise_for_status()
             data = response.json()
             

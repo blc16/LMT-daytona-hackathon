@@ -60,25 +60,48 @@ class PolymarketClient:
             data = response.json()
             return data.get("history", [])
 
-    async def get_price_at(self, clob_token_id: str, timestamp: datetime) -> float:
+    async def get_price_at(self, clob_token_id: str, timestamp: datetime, interval_minutes: Optional[int] = None) -> float:
         """
         Get the price closest to the given timestamp.
         Fetches a small window around the timestamp to find the nearest point.
+        
+        Args:
+            clob_token_id: The CLOB token ID
+            timestamp: The target timestamp
+            interval_minutes: The experiment's interval in minutes (used to determine CLOB API interval granularity)
         """
         ts = int(timestamp.timestamp())
-        # Fetch a 2-hour window around the timestamp to be safe
-        # CLOB history is sparse if there are no trades, so we might need a wider window or 'max' logic in a real app
-        # For MVP, let's try to fetch the specific hour
+        
+        # Determine CLOB interval based on experiment interval
+        # Map experiment intervals to CLOB intervals
+        if interval_minutes is None:
+            clob_interval = "1h"  # Default
+            window_seconds = 3600  # 1 hour window
+        elif interval_minutes >= 1440:  # 1 day or more
+            clob_interval = "1d"
+            window_seconds = 86400  # 1 day window
+        elif interval_minutes >= 60:  # 1 hour or more
+            clob_interval = "1h"
+            window_seconds = 3600  # 1 hour window
+        else:  # Less than 1 hour
+            clob_interval = "1h"  # Use 1h as minimum granularity
+            window_seconds = interval_minutes * 60  # Use experiment interval as window
         
         async with httpx.AsyncClient() as client:
             url = f"{self.clob_url}/prices-history"
             params = {
                 "market": clob_token_id,
-                "startTs": ts - 3600, # 1 hour before
-                "endTs": ts + 3600,   # 1 hour after
-                "interval": "1m"      # high fidelity
+                "startTs": ts - window_seconds,
+                "endTs": ts + window_seconds,
+                "interval": clob_interval
             }
             response = await client.get(url, params=params)
+            if response.status_code != 200:
+                error_text = response.text
+                print(f"Polymarket CLOB API Error {response.status_code}: {error_text}")
+                print(f"URL: {url}")
+                print(f"Params: {params}")
+                print(f"Token ID: {clob_token_id}")
             response.raise_for_status()
             data = response.json()
             history = data.get("history", [])
